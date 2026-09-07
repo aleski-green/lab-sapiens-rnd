@@ -12,9 +12,17 @@ Agentpy is a small notebook-based agent wrapper around the local `codex exec` CL
 
 - Python 3.9+
 - An authenticated `codex` CLI available on `PATH`
-- JupyterLab, for example: `python3 -m pip install jupyterlab`
+- JupyterLab installed in `../.jupyter-venv`
 
-Run `jupyter lab` from this directory and open `agentpy.ipynb`.
+Start the local notebook server with:
+
+```bash
+./start_jupyter.sh
+```
+
+It opens a Terminal window that keeps JupyterLab running at
+`http://127.0.0.1:8888/lab`. Keep that window open while using notebooks,
+then open `agentpy.ipynb`.
 
 ## Usage
 
