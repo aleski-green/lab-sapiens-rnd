@@ -179,6 +179,12 @@ class EchoFactory(LLMFactory):
 
 
 class AgentPy(Agent):
+    @classmethod
+    def open(cls, *, config, factory, agid=None, **options):
+        """Create or restore a persistent agent; background work starts explicitly."""
+        from .runtime import PersistentAgent
+        return PersistentAgent(config=config, factory=factory, agid=agid, **options)
+
     def __init__(
         self,
         config: AgentConfig,

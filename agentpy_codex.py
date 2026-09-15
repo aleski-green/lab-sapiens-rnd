@@ -37,8 +37,10 @@ class CodexLLM(LLM):
     resume: bool = False
     event_sink: EventSink = _print_event
     timeout_seconds: float = 120
+    usage: dict[str, int] | None = None
 
     def complete(self, prompt: str) -> str:
+        self.usage = None
         if self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         command = self._command(prompt)
@@ -153,6 +155,8 @@ class CodexLLM(LLM):
             self.event_sink("🧠 Codex is working…")
         elif event_type == "turn.completed":
             usage = event.get("usage", {})
+            if "input_tokens" in usage and "output_tokens" in usage:
+                self.usage = usage
             self.event_sink(
                 "✅ Codex turn completed "
                 f"(input={usage.get('input_tokens', '?')}, "

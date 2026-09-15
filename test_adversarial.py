@@ -15,7 +15,7 @@ class ScriptedFactory(EchoFactory):
         llm = super().spawn(spec)
         def complete(prompt):
             self.prompts.append(prompt)
-            return {"proposer": "Full proposal", "critic": "Full critique", "arbiter": self.final}[spec.role]
+            return {"proposer": "Full proposal", "critic": "Full critique", "arbiter": self.final, "memory": self.final}[spec.role]
         llm.complete = complete
         return llm
 
@@ -36,7 +36,8 @@ class AdversarialTests(unittest.TestCase):
         self.assertEqual(len(list(agent.memory)), 2)
         self.assertEqual(len(agent.sessions.keys()), 3)
         for role, sent in zip(("proposer", "critic", "arbiter"), agent.factory.prompts):
-            self.assertTrue(sent.startswith(agent.config.manifests[role]))
+            template = getattr(agent.config, role).text
+            self.assertTrue(sent.startswith(template.strip().splitlines()[0]))
         self.assertEqual(result.extras["debate"]["proposal"], "Full proposal")
         agent.handle("Remember HPR-917")
         self.assertEqual(len(list(agent.memory)), 2)
@@ -50,6 +51,31 @@ class AdversarialTests(unittest.TestCase):
                 agent.handle("test")
             self.assertEqual(list(agent.memory), before)
             self.assertEqual(len(agent.sessions.keys()), 3)
+
+    def test_explicit_prompt_only(self):
+        from agentpy.settings import Prompt
+        from agentpy import PipeContext
+        agent = self.make_agent("[]")
+        prompt = Prompt("Only this task: {task}")
+        self.assertEqual(prompt(PipeContext(agent=agent, payload="hello")), "Only this task: hello")
+
+    def test_standalone_consolidation_merges(self):
+        row = dict(kind="preference", content="Concise replies", evidence="User", salience=1, tags=[])
+        agent = self.make_agent(json.dumps([row]))
+        agent.chat.append("user", "I prefer concise replies")
+        agent.consolidate()
+        self.assertEqual(len(list(agent.memory)), 2)
+        self.assertIn("I prefer concise replies", agent.factory.prompts[0])
+
+    def test_quiet_progress(self):
+        from agentpy.settings import progress
+        from contextlib import redirect_stdout
+        from io import StringIO
+        output = StringIO()
+        with redirect_stdout(output):
+            for message in ("🧠 Codex is working", "🤖 Long answer", "🧵 Session ID", "✅ Tokens..."):
+                progress(message)
+        self.assertEqual(output.getvalue(), "Working…\nDone.\n")
 
 
 if __name__ == "__main__":
