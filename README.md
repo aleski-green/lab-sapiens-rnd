@@ -1,12 +1,15 @@
 # Agentpy
 
-Agentpy is a small notebook-based agent wrapper around the local `codex exec` CLI. Each task starts a fresh Codex worker while `Agentpy` keeps the durable context and invocation history on disk.
+AgentPy is a notebook-based agent runtime with configurable LLM flows. It owns manifests, memory, chat, and session logs; config classes supply prompts, schemas, and Python pipeline functions. Codex workers can start fresh sessions or resume existing ones.
 
 ## Contents
 
-- `agentpy.ipynb` — the `Agentpy` class and an interactive example.
-- `agentpy_codex.py` — local Codex execution.
-- `agentpy_state.py` — JSON persistence for agent state.
+- `agentpy.ipynb` — interactive examples, consolidation test, and adversarial-node demo.
+- `agentpy/` — interfaces, runtime, and reusable `LLLamb` / `AdversarialNode` steps.
+- `config.py` — base prompts, memory schema, and pipeline.
+- `adversarial_config.py` — proposer, critic, arbiter prompts and validated memory merge.
+- `agentpy_codex.py` — streaming local Codex execution and session resume.
+- `agentpy_state.py` — legacy JSON persistence helper; not wired into the current runtime.
 
 ## Requirements
 
@@ -27,40 +30,29 @@ then open `agentpy.ipynb`.
 ## Usage
 
 ```python
-agent = Agentpy(
-    context="You are a helpful coding agent.",
-    manifest="Work only inside the current project.",
-    contextUpdPrompt="Update context with durable facts from the last task.",
-)
+from agentpy import AgentPy
+from agentpy_codex import CodexFactory
+from adversarial_config import AdversarialConfig
 
-agent.llmrun("Inspect this project and summarize its structure.")
-print(agent.invocations[-1])
-
-agent.llmupd()
-print(agent.context)
-
-# Equivalent to llmrun() followed by llmupd().
-agent.llmrunupd("Record the project's main components.")
+agent = AgentPy(config=AdversarialConfig(), factory=CodexFactory())
+result = agent.handle("Design a minimal memory experiment.")
+print(agent.memory.render())
+print(result.extras["debate"]["critique"])
 ```
 
-`llmrun()` records the latest invocation and answer, retaining an internal sliding window of 1,000 records. `llmupd()` runs `contextUpdPrompt` exactly as supplied, stores its answer in `context`, and clears the temporary `last_invocation` and `last_result` fields. All three agent methods mutate state and return nothing.
+The adversarial node snapshots context, calls proposer → critic → arbiter with separate sessions, then parses and validates the arbiter's JSON before merging memory. Prompt lambdas are explicitly configured; roles do not silently add instructions. Full proposal and critique text is passed to later roles. Each run gets unique session keys.
+
+Merge preserves unrelated entries and deduplicates exact `(kind, content)` matches. It does not automatically resolve semantic contradictions. Invalid output raises an error without changing memory. The demo deliberately omits automatic user replies and the base pipeline's additional consolidation call.
 
 ## Persistence
 
-Every run and update saves JSON state at:
+Current AgentPy memory and logs are in-process only; kernel restart loses them. Saved notebook outputs are not restored agent state. The earlier JSON helper and 1,000-invocation retention policy are not integrated into this architecture.
 
-```text
-<workdir>/.agentpy/<agid>.json
-```
+## Tests
 
-Restore an existing agent by its ID:
+Run `python -m unittest test_adversarial test_codex_process -v` for deterministic pipeline, failure, timeout, and interrupt tests. The final notebook section runs the real local backend and checks memory retention and prompt piping.
 
-```python
-agent = Agentpy("", "", "", agid="ag_your_saved_id")
-agent.load()
-```
-
-The state file includes the agent ID, context, manifest, update prompt, invocation history, and any pending invocation/result pair. `.agentpy/` is ignored by Git.
+Codex calls have a 120-second per-call deadline, adjustable with `CodexFactory(timeout_seconds=...)`. A timeout or notebook interrupt stops the spawned process group. Failed calls do not reach the memory merge step. Live JSON events follow the [Codex non-interactive interface](https://learn.chatgpt.com/docs/non-interactive-mode).
 
 ## Safety
 

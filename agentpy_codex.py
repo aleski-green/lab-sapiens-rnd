@@ -9,9 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import os
+import signal
 from pathlib import Path
 import subprocess
-from threading import Thread
+from threading import Event, Thread, Timer
 from typing import Any, Callable
 from uuid import uuid4
 
@@ -34,8 +36,11 @@ class CodexLLM(LLM):
     id: str = field(default_factory=lambda: f"pending_{uuid4().hex[:8]}")
     resume: bool = False
     event_sink: EventSink = _print_event
+    timeout_seconds: float = 120
 
     def complete(self, prompt: str) -> str:
+        if self.timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
         command = self._command(prompt)
         final_message: str | None = None
         recent_output: list[str] = []
@@ -49,6 +54,7 @@ class CodexLLM(LLM):
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
+            start_new_session=True,
         )
         assert process.stdout is not None
         assert process.stderr is not None
@@ -61,25 +67,53 @@ class CodexLLM(LLM):
         stderr_thread = Thread(target=drain_stderr, daemon=True)
         stderr_thread.start()
 
-        for raw_line in process.stdout:
-            line = raw_line.rstrip()
-            if not line:
-                continue
-            recent_output.append(line)
-            recent_output = recent_output[-20:]
+        timed_out = Event()
 
+        def stop_process() -> None:
             try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                self.event_sink(f"[codex] {line}")
-                continue
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
-            message = self._consume_event(event)
-            if message is not None:
-                final_message = message
+        def expire() -> None:
+            timed_out.set()
+            stop_process()
 
-        returncode = process.wait()
-        stderr_thread.join()
+        timer = Timer(self.timeout_seconds, expire)
+        timer.daemon = True
+        timer.start()
+        try:
+            for raw_line in process.stdout:
+                line = raw_line.rstrip()
+                if not line:
+                    continue
+                recent_output.append(line)
+                recent_output = recent_output[-20:]
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    self.event_sink(f"[codex] {line}")
+                    continue
+                message = self._consume_event(event)
+                if event.get("type") == "turn.failed":
+                    raise RuntimeError(f"Codex turn failed: {event}")
+                if message is not None:
+                    final_message = message
+            returncode = process.wait()
+        finally:
+            timer.cancel()
+            timer.join()
+            stop_process()
+            process.wait()
+            stderr_thread.join(timeout=2)
+            process.stdout.close()
+            process.stderr.close()
+        if timed_out.is_set():
+            detail = "\n".join(stderr_output[-5:])
+            raise TimeoutError(
+                f"Codex exceeded {self.timeout_seconds}s; its process group was stopped. "
+                f"Session: {self.id}.\n{detail}"
+            )
         if returncode != 0:
             detail = "\n".join([*stderr_output, *recent_output])
             raise RuntimeError(f"codex exec failed (exit {returncode}):\n{detail}")
@@ -168,12 +202,14 @@ class CodexFactory(LLMFactory):
 
     workdir: Path = field(default_factory=Path.cwd)
     event_sink: EventSink = _print_event
+    timeout_seconds: float = 120
 
     def spawn(self, spec: LLMSpec) -> LLM:
         return CodexLLM(
             spec=spec,
             workdir=self.workdir,
             event_sink=self.event_sink,
+            timeout_seconds=self.timeout_seconds,
         )
 
     def iterate(self, session: SessionLog) -> LLM:
@@ -185,6 +221,7 @@ class CodexFactory(LLMFactory):
             id=session.llm_id,
             resume=True,
             event_sink=self.event_sink,
+            timeout_seconds=self.timeout_seconds,
         )
 
 

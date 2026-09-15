@@ -1,4 +1,5 @@
 from agentpy.agent import AgentPy, EchoFactory
+from agentpy.nodes import AdversarialNode, LLLamb
 from agentpy.interfaces import (
     Agent,
     AgentConfig,
@@ -12,6 +13,8 @@ from agentpy.interfaces import (
 )
 
 __all__ = [
+    "AdversarialNode",
+    "LLLamb",
     "Agent",
     "AgentConfig",
     "AgentPy",
